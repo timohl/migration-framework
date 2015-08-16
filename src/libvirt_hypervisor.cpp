@@ -34,6 +34,38 @@ struct Deleter_virDomain
 	}
 };
 
+const std::string file_name = "devices/ib_pci_82_00_1.xml";
+
+void attach_device(virDomainPtr domain)
+{
+	// Convert config file to string
+	std::ifstream file_stream(file_name);
+	std::stringstream string_stream;
+	string_stream << file_stream.rdbuf(); // Filestream to stingstream conversion
+	auto pci_device_xml = string_stream.str();
+
+	// attach device
+	auto ret = virDomainAttachDevice(domain, pci_device_xml.c_str());
+	if (ret != 0)
+		throw std::runtime_error("Failed attaching device with following xml:\n" + pci_device_xml);
+}
+
+void detach_device(virDomainPtr domain)
+{
+	// Convert config file to string
+	std::ifstream file_stream(file_name);
+	std::stringstream string_stream;
+	string_stream << file_stream.rdbuf(); // Filestream to stingstream conversion
+	auto pci_device_xml = string_stream.str();
+
+	// attach device
+	auto ret = virDomainDetachDevice(domain, pci_device_xml.c_str());
+	if (ret != 0)
+		throw std::runtime_error("Failed detaching device with following xml:\n" + pci_device_xml);
+}
+
+
+
 /// TODO: Get hostname dynamically.
 Libvirt_hypervisor::Libvirt_hypervisor() :
 	local_host_conn(virConnectOpen("qemu:///system"))
@@ -79,6 +111,8 @@ void Libvirt_hypervisor::start(const std::string &vm_name, unsigned int vcpus, u
 	// Create domain
 	if (virDomainCreate(domain.get()) == -1)
 		throw std::runtime_error(std::string("Error creating domain: ") + virGetLastErrorMessage());
+	// Attach device
+	attach_device(domain.get());
 }
 
 void Libvirt_hypervisor::stop(const std::string &vm_name)
@@ -100,37 +134,7 @@ void Libvirt_hypervisor::stop(const std::string &vm_name)
 		throw std::runtime_error("Error destroying domain.");
 }
 
-const std::string file_name = "devices/ib_pci_82_00_1.xml";
-
-void attach_device(virDomainPtr domain)
-{
-	// Convert config file to string
-	std::ifstream file_stream(file_name);
-	std::stringstream string_stream;
-	string_stream << file_stream.rdbuf(); // Filestream to stingstream conversion
-	auto pci_device_xml = string_stream.str();
-
-	// attach device
-	auto ret = virDomainAttachDevice(domain, pci_device_xml.c_str());
-	if (ret != 0)
-		throw std::runtime_error("Failed attaching device with following xml:\n" + pci_device_xml);
-}
-
-void detach_device(virDomainPtr domain)
-{
-	// Convert config file to string
-	std::ifstream file_stream(file_name);
-	std::stringstream string_stream;
-	string_stream << file_stream.rdbuf(); // Filestream to stingstream conversion
-	auto pci_device_xml = string_stream.str();
-
-	// attach device
-	auto ret = virDomainDetachDevice(domain, pci_device_xml.c_str());
-	if (ret != 0)
-		throw std::runtime_error("Failed detaching device with following xml:\n" + pci_device_xml);
-}
-
-void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration)
+void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration, bool rdma_migration)
 {
 	// Get domain by name
 	std::unique_ptr<virDomain, Deleter_virDomain> domain(
@@ -177,9 +181,11 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 	// Set migration flags
 	unsigned long flags = 0;
 	flags |= live_migration ? VIR_MIGRATE_LIVE : 0;
+	// create migrateuri
+	std::string migrate_uri = rdma_migration? "rdma://" + dest_hostname + "-ib" : NULL;
 	// Migrate domain
 	std::unique_ptr<virDomain, Deleter_virDomain> dest_domain(
-		virDomainMigrate(domain.get(), dest_connection.get(), flags, 0, 0, 0)
+		virDomainMigrate(domain.get(), dest_connection.get(), flags, 0, migrate_uri.c_str(), 0)
 	);
 	if (!dest_domain)
 		throw std::runtime_error(std::string("Migration failed: ") + virGetLastErrorMessage());
