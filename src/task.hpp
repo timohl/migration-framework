@@ -279,4 +279,22 @@ private:
 };
 YAML_CONVERT_IMPL(Migrate)
 
+/**
+ * \brief Sub_task to quit migfra.
+ */
+class Quit :
+	public Sub_task
+{
+public:
+	/**
+	 * \brief Execute the Sub_task.
+	 *
+	 * \return Returns Result of Sub_task.
+	 * \param hypervisor Hypervisor to be used for execution.
+	 */
+	std::future<Result> execute(std::shared_ptr<Hypervisor> hypervisor,
+				    std::shared_ptr<fast::Communicator> comm);
+};
+YAML_CONVERT_IMPL(Quit)
+
 #endif

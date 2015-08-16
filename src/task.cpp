@@ -115,11 +115,11 @@ Task::Task(std::vector<std::shared_ptr<Sub_task>> sub_tasks, bool concurrent_exe
 
 std::string Task::type(bool enable_result_format) const
 {
-	std::array<std::string, 3> types;
+	std::array<std::string, 4> types;
 	if (enable_result_format)
-		types = {{"vm started", "vm stopped", "vm migrated"}};
+		types = {{"vm started", "vm stopped", "vm migrated", "quit"}};
 	else
-		types = {{"start vm", "stop vm", "migrate vm"}};
+		types = {{"start vm", "stop vm", "migrate vm", "quit"}};
 	if (sub_tasks.empty())
 		throw std::runtime_error("No subtasks available to get type.");
 	else if (std::dynamic_pointer_cast<Start>(sub_tasks.front()))
@@ -128,6 +128,8 @@ std::string Task::type(bool enable_result_format) const
 		return types[1];
 	else if (std::dynamic_pointer_cast<Migrate>(sub_tasks.front()))
 		return types[2];
+	else if (std::dynamic_pointer_cast<Quit>(sub_tasks.front()))
+		return types[3];
 	else
 		throw std::runtime_error("Unknown type of Task.");
 
@@ -158,6 +160,14 @@ template<> std::vector<std::shared_ptr<Sub_task>> load_sub_tasks<Migrate>(const 
 	return std::vector<std::shared_ptr<Sub_task>>(1, migrate_task);
 }
 
+// Specialization for Quit due to different yaml structure (no "vm-configurations")
+template<> std::vector<std::shared_ptr<Sub_task>> load_sub_tasks<Quit>(const YAML::Node &node)
+{
+	std::shared_ptr<Quit> quit_task;
+	fast::load(quit_task, node);
+	return std::vector<std::shared_ptr<Sub_task>>(1, quit_task);
+}
+
 void Task::load(const YAML::Node &node)
 {
 	std::string type;
@@ -165,17 +175,16 @@ void Task::load(const YAML::Node &node)
 		fast::load(type, node["task"]);
 	} catch (const std::exception &e) {
 		throw Task::no_task_exception("Cannot find key \"task\" to load Task from YAML.");
-	}
+	} 
 	if (type == "start vm") {
 		sub_tasks = load_sub_tasks<Start>(node);
-	}
-	else if (type == "stop vm") {
+	} else if (type == "stop vm") {
 		sub_tasks = load_sub_tasks<Stop>(node);
-	}
-	else if (type == "migrate vm") {
+	} else if (type == "migrate vm") {
 		sub_tasks = load_sub_tasks<Migrate>(node);
-	}
-	else
+	} else if (type == "quit") {
+		sub_tasks = load_sub_tasks<Quit>(node);
+	} else
 		throw std::runtime_error("Unknown type of Task while loading.");
 	fast::load(concurrent_execution, node["concurrent-execution"], true);
 }
@@ -185,7 +194,9 @@ void Task::execute(std::shared_ptr<Hypervisor> hypervisor, std::shared_ptr<fast:
 	if (sub_tasks.empty()) return;
 	/// \todo In C++14 unique_ptr for sub_tasks and init capture to move in lambda should be used!
 	auto &sub_tasks = this->sub_tasks;
-	auto result_type = type();
+	auto result_type = type(true);
+	if (result_type == "quit")
+		throw std::runtime_error("quit");
 	auto func = [hypervisor, comm, sub_tasks, result_type]
 	{
 		std::vector<std::future<Result>> future_results;
@@ -324,4 +335,10 @@ std::future<Result> Migrate::execute(std::shared_ptr<Hypervisor> hypervisor, std
 		return Result(vm_name, "success");
 	};
 	return std::async(concurrent_execution ? std::launch::async : std::launch::deferred, func);
+}
+
+std::future<Result> Quit::execute(std::shared_ptr<Hypervisor> hypervisor, std::shared_ptr<fast::Communicator> comm)
+{
+	(void) hypervisor; (void) comm; // unused
+	throw std::runtime_error("Quit task is executed, but it should be handled before.");
 }

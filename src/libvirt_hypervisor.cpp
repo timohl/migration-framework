@@ -73,6 +73,9 @@ void Libvirt_hypervisor::start(const std::string &vm_name, unsigned int vcpus, u
 		throw std::runtime_error("Error setting maximum number of vcpus to " + std::to_string(vcpus) + " for domain " + vm_name);
 	if (virDomainSetVcpusFlags(domain.get(), vcpus, VIR_DOMAIN_AFFECT_CONFIG) == -1)
 		throw std::runtime_error("Error setting number of vcpus to " + std::to_string(vcpus) + " for domain " + vm_name);
+	int memory_stats_period = 1;
+	if (virDomainSetMemoryStatsPeriod(domain.get(), memory_stats_period, VIR_DOMAIN_AFFECT_CONFIG) == -1)
+		throw std::runtime_error("Error setting memory stats period to " + std::to_string(memory_stats_period) + " for domain " + vm_name);
 	// Create domain
 	if (virDomainCreate(domain.get()) == -1)
 		throw std::runtime_error(std::string("Error creating domain: ") + virGetLastErrorMessage());
@@ -142,7 +145,29 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 	if (domain_info.state != VIR_DOMAIN_RUNNING)
 		throw std::runtime_error("Domain not running.");
 	// Detach devices TODO: RAII handler and dynamic device recognition.
-	detach_device(domain.get());
+//	detach_device(domain.get());
+	// Reduce memory
+	virDomainMemoryStatStruct mem_stats[VIR_DOMAIN_MEMORY_STAT_NR];
+	int statcnt;
+	if ((statcnt = virDomainMemoryStats(domain.get(), mem_stats, VIR_DOMAIN_MEMORY_STAT_RSS, 0)) == -1)
+		throw std::runtime_error("Error getting memory stats");
+	unsigned long long unused;
+	unsigned long long available;
+	unsigned long long actual_balloon;
+	for (int i = 0; i != statcnt; ++i) {
+		if (mem_stats[i].tag == VIR_DOMAIN_MEMORY_STAT_UNUSED)
+			unused = mem_stats[i].val;
+		if (mem_stats[i].tag == VIR_DOMAIN_MEMORY_STAT_AVAILABLE)
+			available = mem_stats[i].val;
+		if (mem_stats[i].tag == VIR_DOMAIN_MEMORY_STAT_ACTUAL_BALLOON)
+			actual_balloon = mem_stats[i].val;
+	}
+	std::cout << "Unused: " << unused << ", available: " << available << ", actual: " << actual_balloon << std::endl;
+	auto memory = actual_balloon - unused + 32768;
+	std::cout << "Memory during migration: " << memory << std::endl;
+	if (virDomainSetMemoryFlags(domain.get(), memory, VIR_DOMAIN_AFFECT_LIVE) == -1)
+		throw std::runtime_error("Error setting amount of memory to " + std::to_string(memory) + " KiB for domain " + vm_name);
+
 	// Connect to destination
 	std::unique_ptr<virConnect, Deleter_virConnect> dest_connection(
 		virConnectOpen(("qemu+ssh://" + dest_hostname + "/system").c_str())
@@ -158,6 +183,9 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 	);
 	if (!dest_domain)
 		throw std::runtime_error(std::string("Migration failed: ") + virGetLastErrorMessage());
+	// Reset memory
+	if (virDomainSetMemoryFlags(dest_domain.get(), domain_info.memory, VIR_DOMAIN_AFFECT_LIVE) == -1)
+		throw std::runtime_error("Error setting amount of memory to " + std::to_string(memory) + " KiB for domain " + vm_name);
 	// Attach device
-	attach_device(dest_domain.get());
+//	attach_device(dest_domain.get());
 }

@@ -139,5 +139,5 @@ configure_file(
 add_executable(migfra ${SRC})
 add_executable(migfra_benchmark ${SRC_BENCHMARK})
 
-target_link_libraries(migfra ${LIBS})
-target_link_libraries(migfra_benchmark ${LIBS_BENCHMARK})
+target_link_libraries(migfra ${LIBS} -lboost_regex)
+target_link_libraries(migfra_benchmark ${LIBS_BENCHMARK} -lboost_regex)

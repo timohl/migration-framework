@@ -60,6 +60,7 @@ public:
 	 * \param vm_name The name of the vm to migrate.
 	 * \param dest_hostname The name of the host to migrate to.
 	 * \param live_migration Enables live migration.
+	 * \param live_migration Enables memory ballooning before and after migration.
 	 */
 	void migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration);
 private:
