@@ -64,7 +64,53 @@ void detach_device(virDomainPtr domain)
 		throw std::runtime_error("Failed detaching device with following xml:\n" + pci_device_xml);
 }
 
+struct Memory_stats
+{
+	Memory_stats(virDomainPtr domain);
+	unsigned long long unused = 0;
+	unsigned long long available = 0;
+	unsigned long long actual_balloon = 0;
+	std::string str() const;
+};
 
+Memory_stats::Memory_stats(virDomainPtr domain)
+{
+	std::cout << "Unused test value:" << unused << std::endl;
+	virDomainMemoryStatStruct mem_stats[VIR_DOMAIN_MEMORY_STAT_NR];
+	int statcnt;
+	if ((statcnt = virDomainMemoryStats(domain, mem_stats, VIR_DOMAIN_MEMORY_STAT_RSS, 0)) == -1)
+		throw std::runtime_error("Error getting memory stats");
+	for (int i = 0; i != statcnt; ++i) {
+		if (mem_stats[i].tag == VIR_DOMAIN_MEMORY_STAT_UNUSED)
+			unused = mem_stats[i].val;
+		if (mem_stats[i].tag == VIR_DOMAIN_MEMORY_STAT_AVAILABLE)
+			available = mem_stats[i].val;
+		if (mem_stats[i].tag == VIR_DOMAIN_MEMORY_STAT_ACTUAL_BALLOON)
+			actual_balloon = mem_stats[i].val;
+	}
+}
+
+std::string Memory_stats::str() const
+{
+	return "Unused: " + std::to_string(unused) + ", available: " + std::to_string(available) + ", actual: " + std::to_string(actual_balloon);
+}
+
+virDomainInfo get_domain_info(virDomainPtr domain)
+{
+	virDomainInfo domain_info;
+	if (virDomainGetInfo(domain, &domain_info) == -1)
+		throw std::runtime_error("Failed getting domain info.");
+	return domain_info;
+}
+
+std::string domain_info_memory_to_str(const virDomainInfo &domain_info)
+{
+	return "memory: " + std::to_string(domain_info.memory) + ", maxMem: " + std::to_string(domain_info.maxMem);
+}
+
+class Memory_ballooning_guard
+{
+};
 
 /// TODO: Get hostname dynamically.
 Libvirt_hypervisor::Libvirt_hypervisor() :
@@ -112,7 +158,7 @@ void Libvirt_hypervisor::start(const std::string &vm_name, unsigned int vcpus, u
 	if (virDomainCreate(domain.get()) == -1)
 		throw std::runtime_error(std::string("Error creating domain: ") + virGetLastErrorMessage());
 	// Attach device
-	attach_device(domain.get());
+//	attach_device(domain.get());
 }
 
 void Libvirt_hypervisor::stop(const std::string &vm_name)
@@ -143,34 +189,27 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 	if (!domain)
 		throw std::runtime_error("Domain not found.");
 	// Get domain info + check if in running state
-	virDomainInfo domain_info;
-	if (virDomainGetInfo(domain.get(), &domain_info) == -1)
-		throw std::runtime_error("Failed getting domain info.");
+	auto domain_info = get_domain_info(domain.get());
 	if (domain_info.state != VIR_DOMAIN_RUNNING)
 		throw std::runtime_error("Domain not running.");
 	// Detach devices TODO: RAII handler and dynamic device recognition.
 //	detach_device(domain.get());
 	// Reduce memory
-	virDomainMemoryStatStruct mem_stats[VIR_DOMAIN_MEMORY_STAT_NR];
-	int statcnt;
-	if ((statcnt = virDomainMemoryStats(domain.get(), mem_stats, VIR_DOMAIN_MEMORY_STAT_RSS, 0)) == -1)
-		throw std::runtime_error("Error getting memory stats");
-	unsigned long long unused;
-	unsigned long long available;
-	unsigned long long actual_balloon;
-	for (int i = 0; i != statcnt; ++i) {
-		if (mem_stats[i].tag == VIR_DOMAIN_MEMORY_STAT_UNUSED)
-			unused = mem_stats[i].val;
-		if (mem_stats[i].tag == VIR_DOMAIN_MEMORY_STAT_AVAILABLE)
-			available = mem_stats[i].val;
-		if (mem_stats[i].tag == VIR_DOMAIN_MEMORY_STAT_ACTUAL_BALLOON)
-			actual_balloon = mem_stats[i].val;
-	}
-	std::cout << "Unused: " << unused << ", available: " << available << ", actual: " << actual_balloon << std::endl;
-	auto memory = actual_balloon - unused + 32768;
+	Memory_stats mem_stats(domain.get());
+	auto memory = mem_stats.actual_balloon - mem_stats.unused;
+	std::cout << "Used memory: " << memory << std::endl;
+	memory += (domain_info.maxMem - memory) > 32 * 1024 ? 16 * 1024 : 0;
 	std::cout << "Memory during migration: " << memory << std::endl;
 	if (virDomainSetMemoryFlags(domain.get(), memory, VIR_DOMAIN_AFFECT_LIVE) == -1)
 		throw std::runtime_error("Error setting amount of memory to " + std::to_string(memory) + " KiB for domain " + vm_name);
+
+//	do {
+//		std::cout << "Check memory status" << std::endl;
+//		Memory_stats current_mem_stats(domain.get());
+//		std::cout << current_mem_stats.str() << std::endl;
+//		auto current_domain_info = get_domain_info(domain.get());
+//		std::cout << domain_info_memory_to_str(current_domain_info) << std::endl;
+//	} while(current_mem_stats.ac);
 
 	// Connect to destination
 	std::unique_ptr<virConnect, Deleter_virConnect> dest_connection(
@@ -182,16 +221,19 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 	unsigned long flags = 0;
 	flags |= live_migration ? VIR_MIGRATE_LIVE : 0;
 	// create migrateuri
-	std::string migrate_uri = rdma_migration? "rdma://" + dest_hostname + "-ib" : NULL;
+	auto migrate_uri = rdma_migration ? ("rdma://" + dest_hostname + "-ib").c_str() : nullptr;
 	// Migrate domain
 	std::unique_ptr<virDomain, Deleter_virDomain> dest_domain(
-		virDomainMigrate(domain.get(), dest_connection.get(), flags, 0, migrate_uri.c_str(), 0)
+		virDomainMigrate(domain.get(), dest_connection.get(), flags, 0, migrate_uri, 0)
 	);
 	if (!dest_domain)
 		throw std::runtime_error(std::string("Migration failed: ") + virGetLastErrorMessage());
 	// Reset memory
-	if (virDomainSetMemoryFlags(dest_domain.get(), domain_info.memory, VIR_DOMAIN_AFFECT_LIVE) == -1)
+
+	std::cout << "domain_info.memory= " << domain_info.memory << ", domain_info.maxMem=" << domain_info.maxMem << std::endl;
+	if (virDomainSetMemoryFlags(dest_domain.get(), domain_info.maxMem, VIR_DOMAIN_AFFECT_LIVE) == -1)
 		throw std::runtime_error("Error setting amount of memory to " + std::to_string(memory) + " KiB for domain " + vm_name);
+
 	// Attach device
 //	attach_device(dest_domain.get());
 }

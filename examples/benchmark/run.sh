@@ -79,7 +79,7 @@ elif [ -n "$server_a" ] && [ -n "$server_b" ]; then
 
 	echo "Starting benchmark executable."
 	# start migration benchmark
-	`dirname $0`/../../build/migfra_benchmark -n $n -V "$vm_name" -t "." -H "devon" -A "$server_a" -B "$server_b" -m "$memory"
+	`dirname $0`/../../build/migfra_benchmark -n $n -V "$vm_name" -t "." -H "devon" -A "$server_a" -B "$server_b" -m "$memory" -r 0
 
 	# quit migfra on servers
 	echo "Stop migfra on servers"

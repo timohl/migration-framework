@@ -134,7 +134,7 @@ int main(int argc, char *argv[])
 				throw std::runtime_error("Migration failed.");
 			auto end = std::chrono::high_resolution_clock::now();
 			diffs[2*i] = end - start;
-			std::this_thread::sleep_for(std::chrono::seconds(1));
+			std::this_thread::sleep_for(std::chrono::seconds(2));
 
 			// migrate to a	
 			start = std::chrono::high_resolution_clock::now();
@@ -144,7 +144,7 @@ int main(int argc, char *argv[])
 				throw std::runtime_error("Migration failed.");
 			end = std::chrono::high_resolution_clock::now();
 			diffs[2*i + 1] = end - start;
-			std::this_thread::sleep_for(std::chrono::seconds(1));
+			std::this_thread::sleep_for(std::chrono::seconds(2));
 		}
 	
 		// stop vm
