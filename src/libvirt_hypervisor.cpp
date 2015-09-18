@@ -67,15 +67,29 @@ void detach_device(virDomainPtr domain)
 struct Memory_stats
 {
 	Memory_stats(virDomainPtr domain);
+
 	unsigned long long unused = 0;
 	unsigned long long available = 0;
 	unsigned long long actual_balloon = 0;
+	virDomainPtr domain = nullptr;
+
 	std::string str() const;
+	void refresh();
 };
 
-Memory_stats::Memory_stats(virDomainPtr domain)
+Memory_stats::Memory_stats(virDomainPtr domain) :
+	domain(domain)
 {
-	std::cout << "Unused test value:" << unused << std::endl;
+	refresh();
+}
+
+std::string Memory_stats::str() const
+{
+	return "Unused: " + std::to_string(unused) + ", available: " + std::to_string(available) + ", actual: " + std::to_string(actual_balloon);
+}
+
+void Memory_stats::refresh()
+{
 	virDomainMemoryStatStruct mem_stats[VIR_DOMAIN_MEMORY_STAT_NR];
 	int statcnt;
 	if ((statcnt = virDomainMemoryStats(domain, mem_stats, VIR_DOMAIN_MEMORY_STAT_RSS, 0)) == -1)
@@ -88,11 +102,6 @@ Memory_stats::Memory_stats(virDomainPtr domain)
 		if (mem_stats[i].tag == VIR_DOMAIN_MEMORY_STAT_ACTUAL_BALLOON)
 			actual_balloon = mem_stats[i].val;
 	}
-}
-
-std::string Memory_stats::str() const
-{
-	return "Unused: " + std::to_string(unused) + ", available: " + std::to_string(available) + ", actual: " + std::to_string(actual_balloon);
 }
 
 virDomainInfo get_domain_info(virDomainPtr domain)
@@ -125,6 +134,19 @@ Libvirt_hypervisor::~Libvirt_hypervisor()
 	if (virConnectClose(local_host_conn)) {
 		std::cout << "Warning: Some qemu connections have not been closed after destruction of hypervisor wrapper!" << std::endl;
 	}
+}
+
+void wait_for_memory_change(virDomainPtr domain, unsigned long long expected_actual_balloon)
+{
+	Memory_stats current_mem_stats(domain);
+	do {
+		std::cout << "Check memory status" << std::endl;
+		current_mem_stats.refresh();
+		std::cout << current_mem_stats.str() << std::endl;
+		auto current_domain_info = get_domain_info(domain);
+		std::cout << domain_info_memory_to_str(current_domain_info) << std::endl;
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	} while(current_mem_stats.actual_balloon != expected_actual_balloon);
 }
 
 void Libvirt_hypervisor::start(const std::string &vm_name, unsigned int vcpus, unsigned long memory)
@@ -202,14 +224,7 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 	std::cout << "Memory during migration: " << memory << std::endl;
 	if (virDomainSetMemoryFlags(domain.get(), memory, VIR_DOMAIN_AFFECT_LIVE) == -1)
 		throw std::runtime_error("Error setting amount of memory to " + std::to_string(memory) + " KiB for domain " + vm_name);
-
-//	do {
-//		std::cout << "Check memory status" << std::endl;
-//		Memory_stats current_mem_stats(domain.get());
-//		std::cout << current_mem_stats.str() << std::endl;
-//		auto current_domain_info = get_domain_info(domain.get());
-//		std::cout << domain_info_memory_to_str(current_domain_info) << std::endl;
-//	} while(current_mem_stats.ac);
+	wait_for_memory_change(domain.get(), memory);
 
 	// Connect to destination
 	std::unique_ptr<virConnect, Deleter_virConnect> dest_connection(
@@ -229,10 +244,9 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 	if (!dest_domain)
 		throw std::runtime_error(std::string("Migration failed: ") + virGetLastErrorMessage());
 	// Reset memory
-
-	std::cout << "domain_info.memory= " << domain_info.memory << ", domain_info.maxMem=" << domain_info.maxMem << std::endl;
 	if (virDomainSetMemoryFlags(dest_domain.get(), domain_info.maxMem, VIR_DOMAIN_AFFECT_LIVE) == -1)
 		throw std::runtime_error("Error setting amount of memory to " + std::to_string(memory) + " KiB for domain " + vm_name);
+	wait_for_memory_change(dest_domain.get(), domain_info.maxMem);
 
 	// Attach device
 //	attach_device(dest_domain.get());
