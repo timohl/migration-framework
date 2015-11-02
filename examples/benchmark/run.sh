@@ -79,14 +79,13 @@ elif [ -n "$server_a" ] && [ -n "$server_b" ]; then
 
 	echo "Starting benchmark executable."
 	# start migration benchmark
-	`dirname $0`/../../build/migfra_benchmark -n $n -V "$vm_name" -t "." -H "devon" -A "$server_a" -B "$server_b" -m "$memory" -r 0
+	`dirname $0`/../../build/migfra_benchmark -n $n -V "$vm_name" -t "." -H devon -A "$server_a" -B "$server_b" -m "$memory" -r 0
 
 	# quit migfra on servers
 	echo "Stop migfra on servers"
-	mosquitto_pub -h devon -t "fast/migfra/$server_a/task" -q 2 -f "`dirname $0`/quit_task.yaml"
-	mosquitto_pub -h devon -t "fast/migfra/$server_b/task" -q 2 -f "`dirname $0`/quit_task.yaml"
+	mosquitto_pub -t "fast/migfra/$server_a/task" -h devon -q 2 -f "`dirname $0`/quit_task.yaml"
+	mosquitto_pub -t "fast/migfra/$server_b/task" -h devon -q 2 -f "`dirname $0`/quit_task.yaml"
 	sleep 1
-
 
 elif [ -n "$server_a" ] || [ -n "$server_b" ]; then
 	if [ -n "$server_a" ]; then
