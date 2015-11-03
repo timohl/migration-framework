@@ -15,6 +15,7 @@
 
 #include <memory>
 #include <vector>
+#include <future>
 
 class PCI_device_handler;
 
@@ -71,6 +72,8 @@ public:
 private:
 	virConnectPtr local_host_conn;	
 	std::shared_ptr<PCI_device_handler> pci_device_handler;
+	bool run_event_loop;
+	std::future<void> event_loop;
 };
 
 #endif

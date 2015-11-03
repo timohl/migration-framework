@@ -117,15 +117,32 @@ class Memory_ballooning_guard
 
 /// TODO: Get hostname dynamically.
 Libvirt_hypervisor::Libvirt_hypervisor() :
-	local_host_conn(virConnectOpen("qemu:///system")),
-	pci_device_handler(std::make_shared<PCI_device_handler>())
+	pci_device_handler(std::make_shared<PCI_device_handler>()),
+	run_event_loop(true)
 {
-	if (!local_host_conn)
+	if (virEventRegisterDefaultImpl() < 0) {
+		virErrorPtr err = virGetLastError();
+		throw std::runtime_error("Failed to register event implementation: " + 
+				std::string(err && err->message ? err->message: "Unknown error"));
+	}
+	if ((local_host_conn = virConnectOpen("qemu:///system")) == nullptr) {
 		throw std::runtime_error("Failed to connect to qemu on local host.");
+	}
+	auto &run_event_loop = this->run_event_loop;
+	event_loop = std::async(std::launch::async, [&run_event_loop]{
+		while (run_event_loop) {
+		    if (virEventRunDefaultImpl() < 0) {
+		        virErrorPtr err = virGetLastError();
+			std::cout << "Failed to run event loop: ";
+			std::cout << (err && err->message ? err->message : "Unknown error") << std::endl;
+		    }
+		}
+	});
 }
 
 Libvirt_hypervisor::~Libvirt_hypervisor()
 {
+	run_event_loop = false;
 	if (virConnectClose(local_host_conn)) {
 		std::cout << "Warning: Some qemu connections have not been closed after destruction of hypervisor wrapper!" << std::endl;
 	}
