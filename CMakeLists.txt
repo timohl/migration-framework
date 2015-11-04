@@ -56,6 +56,7 @@ set(SRC ${PROJECT_SOURCE_DIR}/src/main.cpp
 	${PROJECT_SOURCE_DIR}/src/task.cpp
 	${PROJECT_SOURCE_DIR}/src/hooks.cpp
 	${PROJECT_SOURCE_DIR}/src/pci_device_handler.cpp
+	${PROJECT_SOURCE_DIR}/src/memory_ballooning.cpp
 )
 set(SRC_BENCHMARK ${PROJECT_SOURCE_DIR}/src/benchmark_main.cpp
 	${PROJECT_SOURCE_DIR}/src/task.cpp

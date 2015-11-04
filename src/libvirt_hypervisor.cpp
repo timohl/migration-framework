@@ -9,6 +9,7 @@
 #include "libvirt_hypervisor.hpp"
 
 #include "pci_device_handler.hpp"
+#include "memory_ballooning.hpp"
 
 #include <libvirt/libvirt.h>
 #include <libvirt/virterror.h>
@@ -35,80 +36,6 @@ struct Deleter_virDomain
 	{
 		virDomainFree(ptr);
 	}
-};
-
-//
-// Memory ballooning implementation
-//
-
-struct Memory_stats
-{
-	Memory_stats(virDomainPtr domain);
-
-	unsigned long long unused = 0;
-	unsigned long long available = 0;
-	unsigned long long actual_balloon = 0;
-	virDomainPtr domain = nullptr;
-
-	std::string str() const;
-	void refresh();
-};
-
-Memory_stats::Memory_stats(virDomainPtr domain) :
-	domain(domain)
-{
-	refresh();
-}
-
-std::string Memory_stats::str() const
-{
-	return "Unused: " + std::to_string(unused) + ", available: " + std::to_string(available) + ", actual: " + std::to_string(actual_balloon);
-}
-
-void Memory_stats::refresh()
-{
-	virDomainMemoryStatStruct mem_stats[VIR_DOMAIN_MEMORY_STAT_NR];
-	int statcnt;
-	if ((statcnt = virDomainMemoryStats(domain, mem_stats, VIR_DOMAIN_MEMORY_STAT_RSS, 0)) == -1)
-		throw std::runtime_error("Error getting memory stats");
-	for (int i = 0; i != statcnt; ++i) {
-		if (mem_stats[i].tag == VIR_DOMAIN_MEMORY_STAT_UNUSED)
-			unused = mem_stats[i].val;
-		if (mem_stats[i].tag == VIR_DOMAIN_MEMORY_STAT_AVAILABLE)
-			available = mem_stats[i].val;
-		if (mem_stats[i].tag == VIR_DOMAIN_MEMORY_STAT_ACTUAL_BALLOON)
-			actual_balloon = mem_stats[i].val;
-	}
-}
-
-virDomainInfo get_domain_info(virDomainPtr domain)
-{
-	virDomainInfo domain_info;
-	if (virDomainGetInfo(domain, &domain_info) == -1)
-		throw std::runtime_error("Failed getting domain info.");
-	return domain_info;
-}
-
-std::string domain_info_memory_to_str(const virDomainInfo &domain_info)
-{
-	return "memory: " + std::to_string(domain_info.memory) + ", maxMem: " + std::to_string(domain_info.maxMem);
-}
-
-void wait_for_memory_change(virDomainPtr domain, unsigned long long expected_actual_balloon)
-{
-	Memory_stats current_mem_stats(domain);
-	do {
-		std::cout << "Check memory status" << std::endl;
-		current_mem_stats.refresh();
-		std::cout << current_mem_stats.str() << std::endl;
-		auto current_domain_info = get_domain_info(domain);
-		std::cout << domain_info_memory_to_str(current_domain_info) << std::endl;
-		std::this_thread::sleep_for(std::chrono::milliseconds(10));
-	} while(current_mem_stats.actual_balloon != expected_actual_balloon);
-}
-
-class Memory_ballooning_guard
-{
 };
 
 //
@@ -199,6 +126,7 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 	BOOST_LOG_TRIVIAL(trace) << "Migrate " << vm_name << " to " << dest_hostname << ".";
 	BOOST_LOG_TRIVIAL(trace) << std::boolalpha << "live-migration=" << live_migration;
 	BOOST_LOG_TRIVIAL(trace) << std::boolalpha << "rdma-migration=" << rdma_migration;
+	bool mem_ballooning = true; // TODO: pass flag via task message
 
 	// Get domain by name
 	BOOST_LOG_TRIVIAL(trace) << "Get domain by name.";
@@ -218,15 +146,8 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 	BOOST_LOG_TRIVIAL(trace) << "Create guard for device migration.";
 	Migrate_devices_guard dev_guard(pci_device_handler, domain.get());
 
-	// Reduce memory
-	Memory_stats mem_stats(domain.get());
-	auto memory = mem_stats.actual_balloon - mem_stats.unused;
-	std::cout << "Used memory: " << memory << std::endl;
-	memory += (domain_info.maxMem - memory) > 32 * 1024 ? 16 * 1024 : 0;
-	std::cout << "Memory during migration: " << memory << std::endl;
-	if (virDomainSetMemoryFlags(domain.get(), memory, VIR_DOMAIN_AFFECT_LIVE) == -1)
-		throw std::runtime_error("Error setting amount of memory to " + std::to_string(memory) + " KiB for domain " + vm_name);
-	wait_for_memory_change(domain.get(), memory);
+	// Reduce memory (disabled if mem_ballooning==false)
+	Memory_ballooning_guard mem_ballooning_guard(domain.get(), mem_ballooning);
 
 	// Connect to destination
 	BOOST_LOG_TRIVIAL(trace) << "Connect to destination.";
@@ -253,9 +174,7 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 		throw std::runtime_error(std::string("Migration failed: ") + virGetLastErrorMessage());
 
 	// Reset memory
-	if (virDomainSetMemoryFlags(dest_domain.get(), domain_info.maxMem, VIR_DOMAIN_AFFECT_LIVE) == -1)
-		throw std::runtime_error("Error setting amount of memory to " + std::to_string(memory) + " KiB for domain " + vm_name);
-	wait_for_memory_change(dest_domain.get(), domain_info.maxMem);
+	mem_ballooning_guard.reset_memory_on_destination(dest_domain.get());
 
 	// Reattach devices on destination.
 	BOOST_LOG_TRIVIAL(trace) << "Reattach devices on destination.";
