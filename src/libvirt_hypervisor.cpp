@@ -17,8 +17,6 @@
 
 #include <stdexcept>
 #include <memory>
-#include <iostream>
-#include <thread>
 
 // Some deleter to be used with smart pointers.
 
@@ -60,8 +58,8 @@ Libvirt_hypervisor::Libvirt_hypervisor() :
 		while (run_event_loop) {
 		    if (virEventRunDefaultImpl() < 0) {
 		        virErrorPtr err = virGetLastError();
-			std::cout << "Failed to run event loop: ";
-			std::cout << (err && err->message ? err->message : "Unknown error") << std::endl;
+			BOOST_LOG_TRIVIAL(trace) << "Failed to run event loop: ";
+			BOOST_LOG_TRIVIAL(trace) << (err && err->message ? err->message : "Unknown error") << std::endl;
 		    }
 		}
 	});
@@ -71,7 +69,7 @@ Libvirt_hypervisor::~Libvirt_hypervisor()
 {
 	run_event_loop = false;
 	if (virConnectClose(local_host_conn)) {
-		std::cout << "Warning: Some qemu connections have not been closed after destruction of hypervisor wrapper!" << std::endl;
+		BOOST_LOG_TRIVIAL(trace) << "Warning: Some qemu connections have not been closed after destruction of hypervisor wrapper!";
 	}
 }
 
@@ -193,7 +191,11 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 	// Reset memory
 	mem_ballooning_guard.reset_memory_on_destination(dest_domain.get());
 
+	// Set destination domain for guards
+	BOOST_LOG_TRIVIAL(trace) << "Set destination domain for guards.";
+	dev_guard.set_destination_domain(dest_domain.get());
+
 	// Reattach devices on destination.
 	BOOST_LOG_TRIVIAL(trace) << "Reattach devices on destination.";
-	dev_guard.reattach_on_destination(dest_domain.get());
+	dev_guard.reattach();
 }
