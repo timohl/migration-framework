@@ -3,5 +3,5 @@ task: start vm
 vm-configurations: 
   - vm-name: centos7113
     vcpus: 1
-    memory: 524288
+    memory: 1048576
 ...

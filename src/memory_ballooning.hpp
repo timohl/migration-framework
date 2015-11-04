@@ -41,9 +41,9 @@ class Memory_ballooning_guard
 public:
 	Memory_ballooning_guard(virDomainPtr domain, bool enable_memory_ballooning);
 	~Memory_ballooning_guard();
-	void reset_memory_on_destination(virDomainPtr dest_domain);
-private:
+	void set_destination_domain(virDomainPtr dest_domain);
 	void reset_memory();
+private:
 	
 	virDomainPtr domain;
 	unsigned long long initial_memory;

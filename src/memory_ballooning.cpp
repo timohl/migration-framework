@@ -115,15 +115,14 @@ Memory_ballooning_guard::~Memory_ballooning_guard()
 	}
 }
 
-void Memory_ballooning_guard::reset_memory_on_destination(virDomainPtr dest_domain)
+void Memory_ballooning_guard::set_destination_domain(virDomainPtr dest_domain)
 {
-	memory_was_reset = true; // Used so that destructor does not reset memory again.
 	domain = dest_domain;
-	reset_memory();
 }
 
 void Memory_ballooning_guard::reset_memory()
 {
+	memory_was_reset = true; // Used so that destructor does not reset memory again.
 	if (enable_memory_ballooning) {
 		if (virDomainSetMemoryFlags(domain, initial_memory, VIR_DOMAIN_AFFECT_LIVE) == -1)
 			throw std::runtime_error("Error setting amount of memory to " + std::to_string(initial_memory) + " KiB.");

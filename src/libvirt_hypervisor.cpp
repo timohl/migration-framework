@@ -45,14 +45,24 @@ Libvirt_hypervisor::Libvirt_hypervisor() :
 	pci_device_handler(std::make_shared<PCI_device_handler>()),
 	run_event_loop(true)
 {
+	BOOST_LOG_TRIVIAL(trace) << "Initialize libvirt.";
+	if (virInitialize() < 0) {
+	    throw std::runtime_error("Failed to initialize libvirt");
+	}
+
+	BOOST_LOG_TRIVIAL(trace) << "Register event implementation.";
 	if (virEventRegisterDefaultImpl() < 0) {
 		virErrorPtr err = virGetLastError();
 		throw std::runtime_error("Failed to register event implementation: " + 
 				std::string(err && err->message ? err->message: "Unknown error"));
 	}
+
+	BOOST_LOG_TRIVIAL(trace) << "Connect to hypervisor.";
 	if ((local_host_conn = virConnectOpen("qemu:///system")) == nullptr) {
 		throw std::runtime_error("Failed to connect to qemu on local host.");
 	}
+
+	BOOST_LOG_TRIVIAL(trace) << "Start libvirt event loop.";
 	auto &run_event_loop = this->run_event_loop;
 	event_loop = std::async(std::launch::async, [&run_event_loop]{
 		while (run_event_loop) {
@@ -68,6 +78,7 @@ Libvirt_hypervisor::Libvirt_hypervisor() :
 Libvirt_hypervisor::~Libvirt_hypervisor()
 {
 	run_event_loop = false;
+	BOOST_LOG_TRIVIAL(trace) << "Close connection to hypervisor.";
 	if (virConnectClose(local_host_conn)) {
 		BOOST_LOG_TRIVIAL(trace) << "Warning: Some qemu connections have not been closed after destruction of hypervisor wrapper!";
 	}
@@ -188,13 +199,15 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 	if (!dest_domain)
 		throw std::runtime_error(std::string("Migration failed: ") + virGetLastErrorMessage());
 
-	// Reset memory
-	mem_ballooning_guard.reset_memory_on_destination(dest_domain.get());
-
 	// Set destination domain for guards
 	BOOST_LOG_TRIVIAL(trace) << "Set destination domain for guards.";
+	mem_ballooning_guard.set_destination_domain(dest_domain.get());
 	dev_guard.set_destination_domain(dest_domain.get());
 
+	// Reset memory
+	BOOST_LOG_TRIVIAL(trace) << "Reset memory on destination.";
+	mem_ballooning_guard.reset_memory();
+	
 	// Reattach devices on destination.
 	BOOST_LOG_TRIVIAL(trace) << "Reattach devices on destination.";
 	dev_guard.reattach();
