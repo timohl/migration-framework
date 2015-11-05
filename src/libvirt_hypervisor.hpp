@@ -68,7 +68,7 @@ public:
 	 * \param live_migration Enables live migration.
 	 * \param rdma_migration Enables rdma migration.
 	 */
-	void migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration, bool rdma_migration);
+	void migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration, bool rdma_migration, bool memory_ballooning);
 private:
 	virConnectPtr local_host_conn;	
 	std::shared_ptr<PCI_device_handler> pci_device_handler;

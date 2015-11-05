@@ -147,12 +147,11 @@ void Libvirt_hypervisor::stop(const std::string &vm_name)
 		throw std::runtime_error("Error destroying domain.");
 }
 
-void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration, bool rdma_migration)
+void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration, bool rdma_migration, bool memory_ballooning)
 {
 	BOOST_LOG_TRIVIAL(trace) << "Migrate " << vm_name << " to " << dest_hostname << ".";
 	BOOST_LOG_TRIVIAL(trace) << std::boolalpha << "live-migration=" << live_migration;
 	BOOST_LOG_TRIVIAL(trace) << std::boolalpha << "rdma-migration=" << rdma_migration;
-	bool mem_ballooning = true; // TODO: pass flag via task message
 
 	// Get domain by name
 	BOOST_LOG_TRIVIAL(trace) << "Get domain by name.";
@@ -172,8 +171,8 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 	BOOST_LOG_TRIVIAL(trace) << "Create guard for device migration.";
 	Migrate_devices_guard dev_guard(pci_device_handler, domain.get());
 
-	// Reduce memory (disabled if mem_ballooning==false)
-	Memory_ballooning_guard mem_ballooning_guard(domain.get(), mem_ballooning);
+	// Reduce memory (disabled if memory_ballooning==false)
+	Memory_ballooning_guard mem_ballooning_guard(domain.get(), memory_ballooning);
 
 	// Connect to destination
 	BOOST_LOG_TRIVIAL(trace) << "Connect to destination.";

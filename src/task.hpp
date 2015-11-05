@@ -260,7 +260,7 @@ public:
 	 * \param rdma_migration Option to enable rdma migration.
 	 * \param concurrent_execution Execute this Sub_task in dedicated thread.
 	 */
-	Migrate(std::string vm_name, std::string dest_hostname, bool live_migration, bool rdma_migration, bool concurrent_execution, unsigned int pscom_hook_procs);
+	Migrate(std::string vm_name, std::string dest_hostname, bool live_migration, bool rdma_migration, bool concurrent_execution, unsigned int pscom_hook_procs, bool memory_ballooning);
 
 	/**
 	 * \brief Execute the Sub_task.
@@ -280,6 +280,7 @@ private:
 	bool live_migration;
 	bool rdma_migration;
 	unsigned int pscom_hook_procs;
+	bool memory_ballooning;
 };
 YAML_CONVERT_IMPL(Migrate)
 
