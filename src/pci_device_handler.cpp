@@ -379,7 +379,7 @@ std::unordered_map<PCI_id, size_t> PCI_device_handler::detach(virDomainPtr domai
 	for (const auto &device : devices) {
 		if (virDomainDetachDevice(domain, device->to_hostdev_xml().c_str()) != 0) {
 			auto domain_name = virDomainGetName(domain);
-			BOOST_LOG_TRIVIAL(trace) << "Error detaching device " << device->address.str() 
+			BOOST_LOG_TRIVIAL(error) << "Error detaching device " << device->address.str() 
 						 << " from " << domain_name << ".";
 		}
 		device->attached_hint = false;
@@ -411,7 +411,7 @@ Migrate_devices_guard::~Migrate_devices_guard()
 	try {
 		reattach();
 	} catch (...) {
-		BOOST_LOG_TRIVIAL(trace) << "Exception while reattaching devices.";
+		BOOST_LOG_TRIVIAL(error) << "Exception while reattaching devices.";
 	}
 }
 

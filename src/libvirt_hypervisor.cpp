@@ -66,11 +66,11 @@ Libvirt_hypervisor::Libvirt_hypervisor() :
 	auto &run_event_loop = this->run_event_loop;
 	event_loop = std::async(std::launch::async, [&run_event_loop]{
 		while (run_event_loop) {
-		    if (virEventRunDefaultImpl() < 0) {
-		        virErrorPtr err = virGetLastError();
-			BOOST_LOG_TRIVIAL(trace) << "Failed to run event loop: ";
-			BOOST_LOG_TRIVIAL(trace) << (err && err->message ? err->message : "Unknown error") << std::endl;
-		    }
+			if (virEventRunDefaultImpl() < 0) {
+				virErrorPtr err = virGetLastError();
+				BOOST_LOG_TRIVIAL(error) << "Failed to run event loop: ";
+				BOOST_LOG_TRIVIAL(error) << (err && err->message ? err->message : "Unknown error") << std::endl;
+			}
 		}
 	});
 }
@@ -80,7 +80,7 @@ Libvirt_hypervisor::~Libvirt_hypervisor()
 	run_event_loop = false;
 	BOOST_LOG_TRIVIAL(trace) << "Close connection to hypervisor.";
 	if (virConnectClose(local_host_conn)) {
-		BOOST_LOG_TRIVIAL(trace) << "Warning: Some qemu connections have not been closed after destruction of hypervisor wrapper!";
+		BOOST_LOG_TRIVIAL(warning) << "Warning: Some qemu connections have not been closed after destruction of hypervisor wrapper!";
 	}
 }
 
