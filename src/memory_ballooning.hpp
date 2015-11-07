@@ -9,6 +9,8 @@
 #ifndef MEMORY_BALLOONING_HPP
 #define MEMORY_BALLOONING_HPP
 
+#include "time_measurement.hpp"
+
 #include <libvirt/libvirt.h>
 
 #include <string>
@@ -39,7 +41,7 @@ void wait_for_memory_change(virDomainPtr domain, unsigned long long expected_act
 class Memory_ballooning_guard
 {
 public:
-	Memory_ballooning_guard(virDomainPtr domain, bool enable_memory_ballooning);
+	Memory_ballooning_guard(virDomainPtr domain, bool enable_memory_ballooning, Time_measurement &time_measurement);
 	~Memory_ballooning_guard();
 	void set_destination_domain(virDomainPtr dest_domain);
 	void reset_memory();
@@ -49,6 +51,7 @@ private:
 	unsigned long long initial_memory;
 	bool memory_was_reset;
 	bool enable_memory_ballooning;
+	Time_measurement &time_measurement;
 };
 
 #endif

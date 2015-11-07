@@ -155,12 +155,14 @@ void resize_memory_balloon(virDomainPtr domain, unsigned long long memory)
 // Memory_ballooning_guard implementation
 //
 
-Memory_ballooning_guard::Memory_ballooning_guard(virDomainPtr domain, bool enable_memory_ballooning) :
+Memory_ballooning_guard::Memory_ballooning_guard(virDomainPtr domain, bool enable_memory_ballooning, Time_measurement &time_measurement) :
 	domain(domain),
 	memory_was_reset(false),
-	enable_memory_ballooning(enable_memory_ballooning)
+	enable_memory_ballooning(enable_memory_ballooning),
+	time_measurement(time_measurement)
 {
 	if (enable_memory_ballooning) {
+		time_measurement.tick("shrink-mem-balloon");
 		// maxMem == actual_balloon???
 		initial_memory = get_domain_info(domain).maxMem;
 		Memory_stats mem_stats(domain);
@@ -170,6 +172,7 @@ Memory_ballooning_guard::Memory_ballooning_guard(virDomainPtr domain, bool enabl
 		BOOST_LOG_TRIVIAL(trace) << "Memory during migration: " << memory;
 		
 		resize_memory_balloon(domain, memory);
+		time_measurement.tock("shrink-mem-balloon");
 	}
 }	
 
@@ -192,6 +195,8 @@ void Memory_ballooning_guard::reset_memory()
 {
 	memory_was_reset = true; // Used so that destructor does not reset memory again.
 	if (enable_memory_ballooning) {
+		time_measurement.tick("reset-mem-balloon");
 		resize_memory_balloon(domain, initial_memory);
+		time_measurement.tock("reset-mem-balloon");
 	}
 }

@@ -46,7 +46,7 @@ public:
 	 * Never throws if never_throw is true, else it throws.
 	 * \param vm_name The name of the vm to stop.
 	 */
-	void stop(const std::string &vm_name);
+	void stop(const std::string &vm_name, bool force);
 	/**
 	 * \brief Method to migrate a virtual machine to another host.
 	 *
@@ -57,7 +57,7 @@ public:
 	 * \param live_migration Enables live migration.
 	 * \param rdma_migration Enables rdma migration.
 	 */
-	void migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration, bool rdma_migration, bool memory_ballooning);
+	void migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration, bool rdma_migration, bool memory_ballooning, Time_measurement &time_measurement);
 private:
 	const bool never_throw;
 };

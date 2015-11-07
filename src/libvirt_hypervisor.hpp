@@ -56,8 +56,9 @@ public:
 	 *
 	 * Calls libvirt API to stop a virtual machine.
 	 * \param vm_name The name of the vm to stop.
+	 * \param force If true the domain is destroyed, else it is shut down gracefully.
 	 */
-	void stop(const std::string &vm_name);
+	void stop(const std::string &vm_name, bool force);
 	/**
 	 * \brief Method to migrate a virtual machine to another host.
 	 *
@@ -67,8 +68,10 @@ public:
 	 * \param dest_hostname The name of the host to migrate to.
 	 * \param live_migration Enables live migration.
 	 * \param rdma_migration Enables rdma migration.
+	 * \param memory_ballooning Enables memory ballooning
+	 * \param time_measurement Time measurement facility.
 	 */
-	void migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration, bool rdma_migration, bool memory_ballooning);
+	void migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration, bool rdma_migration, bool memory_ballooning, Time_measurement &time_measurement);
 private:
 	virConnectPtr local_host_conn;	
 	std::shared_ptr<PCI_device_handler> pci_device_handler;

@@ -14,9 +14,12 @@
 #include <libvirt/libvirt.h>
 #include <libvirt/virterror.h>
 #include <boost/log/trivial.hpp>
+#include <libssh/libsshpp.hpp>
 
 #include <stdexcept>
 #include <memory>
+#include <thread>
+#include <chrono>
 
 // Some deleter to be used with smart pointers.
 
@@ -35,6 +38,26 @@ struct Deleter_virDomain
 		virDomainFree(ptr);
 	}
 };
+
+void probe_ssh_connection(virDomainPtr domain)
+{
+	auto host = virDomainGetName(domain);
+	ssh::Session session;
+	session.setOption(SSH_OPTIONS_HOST, host);
+	bool success = false;
+	do {
+		try {
+			BOOST_LOG_TRIVIAL(trace) << "Try to connect to domain with SSH.";
+			session.connect();
+			BOOST_LOG_TRIVIAL(trace) << "Domain is ready.";
+			success = true;
+		} catch (ssh::SshException &e) {
+			BOOST_LOG_TRIVIAL(debug) << "Exception while connecting with SSH: " << e.getError();
+			std::this_thread::sleep_for(std::chrono::seconds(1));
+		}
+		session.disconnect();
+	} while (!success);
+}
 
 //
 // Libvirt_hypervisor implementation
@@ -125,9 +148,11 @@ void Libvirt_hypervisor::start(const std::string &vm_name, unsigned int vcpus, u
 		BOOST_LOG_TRIVIAL(trace) << "Attach device with PCI-ID " << pci_id.str();
 		pci_device_handler->attach(domain.get(), pci_id);
 	}
+	// Wait for domain to boot
+	probe_ssh_connection(domain.get());
 }
 
-void Libvirt_hypervisor::stop(const std::string &vm_name)
+void Libvirt_hypervisor::stop(const std::string &vm_name, bool force)
 {
 	// Get domain by name
 	std::unique_ptr<virDomain, Deleter_virDomain> domain(
@@ -141,13 +166,29 @@ void Libvirt_hypervisor::stop(const std::string &vm_name)
 		throw std::runtime_error("Failed getting domain info.");
 	if (domain_info.state != VIR_DOMAIN_RUNNING)
 		throw std::runtime_error("Domain not running.");
+	// Detach PCI devices
 	pci_device_handler->detach(domain.get());
-	// Destroy domain
-	if (virDomainDestroy(domain.get()) == -1)
-		throw std::runtime_error("Error destroying domain.");
+	// Destroy or shutdown domain
+	if (force) {
+		if (virDomainDestroy(domain.get()) == -1)
+			throw std::runtime_error("Error destroying domain.");
+	} else {
+		if (virDomainShutdown(domain.get()) == -1)
+			throw std::runtime_error("Error shutting domain down.");
+	}
+	// Wait until domain is shut down
+	BOOST_LOG_TRIVIAL(trace) << "Wait until domain is shut down.";
+	if (virDomainGetInfo(domain.get(), &domain_info) == -1)
+		throw std::runtime_error("Failed getting domain info.");
+	while (domain_info.state != VIR_DOMAIN_SHUTOFF) {
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+		if (virDomainGetInfo(domain.get(), &domain_info) == -1)
+			throw std::runtime_error("Failed getting domain info.");
+	}
+	BOOST_LOG_TRIVIAL(trace) << "Domain is shut down.";
 }
 
-void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration, bool rdma_migration, bool memory_ballooning)
+void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration, bool rdma_migration, bool memory_ballooning, Time_measurement &time_measurement)
 {
 	BOOST_LOG_TRIVIAL(trace) << "Migrate " << vm_name << " to " << dest_hostname << ".";
 	BOOST_LOG_TRIVIAL(trace) << std::boolalpha << "live-migration=" << live_migration;
@@ -172,7 +213,7 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 	Migrate_devices_guard dev_guard(pci_device_handler, domain.get());
 
 	// Reduce memory (disabled if memory_ballooning==false)
-	Memory_ballooning_guard mem_ballooning_guard(domain.get(), memory_ballooning);
+	Memory_ballooning_guard mem_ballooning_guard(domain.get(), memory_ballooning, time_measurement);
 
 	// Connect to destination
 	BOOST_LOG_TRIVIAL(trace) << "Connect to destination.";
@@ -192,9 +233,11 @@ void Libvirt_hypervisor::migrate(const std::string &vm_name, const std::string &
 
 	// Migrate domain
 	BOOST_LOG_TRIVIAL(trace) << "Migrate domain.";
+	time_measurement.tick("migrate");
 	std::unique_ptr<virDomain, Deleter_virDomain> dest_domain(
 		virDomainMigrate(domain.get(), dest_connection.get(), flags, 0, rdma_migration ? migrate_uri.c_str() : nullptr, 0)
 	);
+	time_measurement.tock("migrate");
 	if (!dest_domain)
 		throw std::runtime_error(std::string("Migration failed: ") + virGetLastErrorMessage());
 

@@ -11,6 +11,7 @@
 
 #include "hypervisor.hpp"
 #include "pci_device_handler.hpp"
+#include "time_measurement.hpp"
 
 #include <fast-lib/communication/communicator.hpp>
 #include <fast-lib/serialization/serializable.hpp>
@@ -64,9 +65,11 @@ struct Result : public fast::Serializable
 {
 	Result() = default;
 	Result(std::string vm_name, std::string status, std::string details = "");
+	Result(std::string vm_name, std::string status, Time_measurement time_measurement, std::string details = "");
 	std::string vm_name;
 	std::string status;
 	std::string details;
+	Time_measurement time_measurement;
 
 	YAML::Node emit() const override;
 	void load(const YAML::Node &node) override;
@@ -224,7 +227,7 @@ public:
 	 * \param vm_name The name of the virtual machine to stop.
 	 * \param concurrent_execution Execute this Sub_task in dedicated thread.
 	 */
-	Stop(std::string vm_name, bool concurrent_execution);
+	Stop(std::string vm_name, bool force, bool concurrent_execution);
 	
 	/**
 	 * \brief Execute the Sub_task.
@@ -240,6 +243,7 @@ public:
 
 private:
 	std::string vm_name;
+	bool force;
 };
 YAML_CONVERT_IMPL(Stop)
 
@@ -259,8 +263,9 @@ public:
 	 * \param live_migration Option to enable live migration.
 	 * \param rdma_migration Option to enable rdma migration.
 	 * \param concurrent_execution Execute this Sub_task in dedicated thread.
+	 * \param time_measurement Option to enable time measurements.
 	 */
-	Migrate(std::string vm_name, std::string dest_hostname, bool live_migration, bool rdma_migration, bool concurrent_execution, unsigned int pscom_hook_procs, bool memory_ballooning);
+	Migrate(std::string vm_name, std::string dest_hostname, bool live_migration, bool rdma_migration, bool concurrent_execution, unsigned int pscom_hook_procs, bool memory_ballooning, bool time_measurement);
 
 	/**
 	 * \brief Execute the Sub_task.
@@ -281,6 +286,7 @@ private:
 	bool rdma_migration;
 	unsigned int pscom_hook_procs;
 	bool memory_ballooning;
+	bool time_measurement;
 };
 YAML_CONVERT_IMPL(Migrate)
 

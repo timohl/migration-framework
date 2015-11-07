@@ -10,6 +10,7 @@
 #define HYPERVISOR_HPP
 
 #include "pci_device_handler.hpp"
+#include "time_measurement.hpp"
 
 #include <string>
 #include <vector>
@@ -41,7 +42,7 @@ public:
 	 * A pure virtual method to provide an interface for stopping a virtual machine.
 	 * \param vm_name The name of the vm to stop.
 	 */
-	virtual void stop(const std::string &vm_name) = 0;
+	virtual void stop(const std::string &vm_name, bool force) = 0;
 	/**
 	 * \brief Method to migrate a virtual machine to another host.
 	 *
@@ -51,7 +52,7 @@ public:
 	 * \param live_migration Enables live migration.
 	 * \param rdma_migration Enables rdma migration.
 	 */
-	virtual void migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration, bool rdma_migration, bool memory_ballooning) = 0;
+	virtual void migrate(const std::string &vm_name, const std::string &dest_hostname, bool live_migration, bool rdma_migration, bool memory_ballooning, Time_measurement &time_measurement) = 0;
 };
 
 #endif
