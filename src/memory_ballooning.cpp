@@ -70,23 +70,23 @@ void Memory_stats::refresh()
 //
 
 // TODO: Use event callback.
-void wait_for_memory_change(virDomainPtr domain, unsigned long long expected_actual_balloon)
-{
-	Memory_stats current_mem_stats(domain);
-	do {
-		BOOST_LOG_TRIVIAL(trace) << "Check memory status";
-		current_mem_stats.refresh();
-		BOOST_LOG_TRIVIAL(trace) << current_mem_stats.str();
-		auto current_domain_info = get_domain_info(domain);
-		BOOST_LOG_TRIVIAL(trace) << domain_info_memory_to_str(current_domain_info);
-		std::this_thread::sleep_for(std::chrono::milliseconds(10));
-	} while(current_mem_stats.actual_balloon != expected_actual_balloon);
-}
+//void wait_for_memory_change(virDomainPtr domain, unsigned long long expected_actual_balloon)
+//{
+//	Memory_stats current_mem_stats(domain);
+//	do {
+//		BOOST_LOG_TRIVIAL(trace) << "Check memory status";
+//		current_mem_stats.refresh();
+//		BOOST_LOG_TRIVIAL(trace) << current_mem_stats.str();
+//		auto current_domain_info = get_domain_info(domain);
+//		BOOST_LOG_TRIVIAL(trace) << domain_info_memory_to_str(current_domain_info);
+//		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+//	} while(current_mem_stats.actual_balloon != expected_actual_balloon);
+//}
 
 class Balloon_adaption_signal
 {
 public:
-	Balloon_adaption_signal(unsigned long long expected_actual_balloon);
+	Balloon_adaption_signal(unsigned long long expected_actual_balloon, virDomainPtr domain);
 	void register_current_actual_balloon(unsigned long long actual_balloon);
 	void wait();
 private:
@@ -94,18 +94,31 @@ private:
 	bool balloon_is_adapted;
 	std::mutex balloon_is_adapted_mutex;
 	std::condition_variable balloon_is_adapted_cv;
+	unsigned long long last_actual_balloon;
+	virDomainPtr domain;
 };
 
-Balloon_adaption_signal::Balloon_adaption_signal(unsigned long long expected_actual_balloon) :
+Balloon_adaption_signal::Balloon_adaption_signal(unsigned long long expected_actual_balloon, virDomainPtr domain) :
 	expected_actual_balloon(expected_actual_balloon),
-	balloon_is_adapted(false)
+	balloon_is_adapted(false),
+	domain(domain)
 {
+	Memory_stats stats(domain);
+	last_actual_balloon = stats.actual_balloon;
 }
 
 void Balloon_adaption_signal::register_current_actual_balloon(unsigned long long actual_balloon)
 {
-	BOOST_LOG_TRIVIAL(trace) << "Balloon: " << actual_balloon << "/" << expected_actual_balloon;
-	if (actual_balloon == expected_actual_balloon) {
+	auto last_rate = (actual_balloon < last_actual_balloon) ? last_actual_balloon - actual_balloon : actual_balloon - last_actual_balloon;
+	last_actual_balloon = actual_balloon;
+	BOOST_LOG_TRIVIAL(trace) << "Balloon: " << actual_balloon << "/" << expected_actual_balloon << " (" << last_rate << " KiB/s)";
+	auto total_diff = (actual_balloon < expected_actual_balloon) ? expected_actual_balloon - actual_balloon : actual_balloon - expected_actual_balloon;
+       	if (total_diff < last_rate) {
+		if (total_diff != 0) {
+			// TODO: Is sleeping in callback so clever?
+			BOOST_LOG_TRIVIAL(trace) << "Sleep duration: " << ((total_diff * 1000) / last_rate);
+			std::this_thread::sleep_for(std::chrono::milliseconds((total_diff * 1000) / last_rate));
+		}
 		std::unique_lock<std::mutex> lock(balloon_is_adapted_mutex);
 		balloon_is_adapted = true;
 		lock.unlock();
@@ -115,8 +128,20 @@ void Balloon_adaption_signal::register_current_actual_balloon(unsigned long long
 
 void Balloon_adaption_signal::wait()
 {
+	// Wait for signal.
 	std::unique_lock<std::mutex> lock(balloon_is_adapted_mutex);
 	balloon_is_adapted_cv.wait(lock, [this]{return balloon_is_adapted;});
+	// Confirm actual balloon and wait actively until it is actually reached.
+	auto start = std::chrono::high_resolution_clock::now();
+	Memory_stats stats(domain);
+	while (stats.actual_balloon != expected_actual_balloon) { // TODO: Limit loop by max duration of 2 seconds
+		BOOST_LOG_TRIVIAL(trace) << "Not yet adapted: " << stats.actual_balloon << "/" << expected_actual_balloon;
+		auto now = std::chrono::high_resolution_clock::now();
+		if (std::chrono::duration_cast<std::chrono::seconds>(now - start).count() == 1)
+			break;
+		std::this_thread::yield();
+		stats.refresh();
+	}
 }
 
 int balloon_change_callback(virConnectPtr connection, virDomainPtr domain, unsigned long long actual, void *opaque)
@@ -129,7 +154,7 @@ int balloon_change_callback(virConnectPtr connection, virDomainPtr domain, unsig
 
 void resize_memory_balloon(virDomainPtr domain, unsigned long long memory)
 {
-	Balloon_adaption_signal signal(memory);
+	Balloon_adaption_signal signal(memory, domain);
 	auto connection = virDomainGetConnect(domain);
 
 	BOOST_LOG_TRIVIAL(trace) << "Register event callback for balloon change.";
@@ -163,15 +188,19 @@ Memory_ballooning_guard::Memory_ballooning_guard(virDomainPtr domain, bool enabl
 {
 	if (enable_memory_ballooning) {
 		time_measurement.tick("shrink-mem-balloon");
-		// maxMem == actual_balloon???
-		initial_memory = get_domain_info(domain).maxMem;
 		Memory_stats mem_stats(domain);
-		auto memory = mem_stats.actual_balloon - mem_stats.unused;
-		BOOST_LOG_TRIVIAL(trace) << "Used memory: " << memory;
-		memory += (initial_memory - memory) > 32 * 1024 ? 16 * 1024 : 0;
-		BOOST_LOG_TRIVIAL(trace) << "Memory during migration: " << memory;
-		
-		resize_memory_balloon(domain, memory);
+		BOOST_LOG_TRIVIAL(trace) << mem_stats.str();
+		initial_memory = mem_stats.actual_balloon;
+		auto used_memory = mem_stats.actual_balloon - mem_stats.unused;
+		BOOST_LOG_TRIVIAL(trace) << "Used memory: " << used_memory;
+		// Add 5% of unused memory as buffer.
+		auto migration_memory = used_memory + static_cast<unsigned long long>(mem_stats.unused * .05);
+		migration_memory = (migration_memory / 4) * 4; // Align to pagesize TODO: get and use system pagesize
+		BOOST_LOG_TRIVIAL(trace) << "Memory during migration: " << migration_memory;
+		// Make sure memory is really decreased. TODO: Maybe unnecessary?
+		if (migration_memory < initial_memory) {
+			resize_memory_balloon(domain, migration_memory);
+		}
 		time_measurement.tock("shrink-mem-balloon");
 	}
 }	

@@ -47,7 +47,7 @@ YAML::Node Time_measurement::emit() const
 {
 	YAML::Node node;
 	for (auto &timer : timers) {
-		node[timer.first] = timer.second.format();
+		node[timer.first] = (timer.second.elapsed().wall / 1000000);
 	}
 	return node;
 }
