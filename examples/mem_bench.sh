@@ -7,12 +7,15 @@ server_b=pandora2
 vm_name=centos7113
 host=devon
 vcpus=1
-mem_values_GiB="30"
+mem_values_GiB="8"
 #mem_values_GiB="30 28 26 24 22"
-iterations=1
+iterations=100
 rdma_migration='false'
 live_migration='false'
 memory_ballooning='true'
+#app="cg.C.8"
+app="mg.C.8"
+
 start_template="$(cat start_template.yaml | sed s/\$vcpus/$vcpus/ | sed s/\$vm_name/$vm_name/)"
 migrate_template="$(cat migrate_template.yaml | sed s/\$rdma_migration/$rdma_migration/ | sed s/\$live_migration/$live_migration/ | sed s/\$vm_name/$vm_name/ | sed s/\$memory_ballooning/$memory_ballooning/)"
 stop_task="$(cat stop_template.yaml | sed s/\$vm_name/$vm_name/)"
@@ -143,30 +146,45 @@ for mem in $mem_values_GiB; do
 	mosquitto_pub -q 2 -h "$host" -t fast/migfra/"$server_a"/task -m "$start_task"
 	wait $!
 	sleep 5
+	
+	( 
+		. /global/cluster/intel/bin/compilervars.sh intel64 
+		for i in {1..20}; do 
+			time mpirun -hosts "$vm_name" -np 8 ~/npb/NAS-Parallel-Benchmark/NPB3.3-MPI/bin/"$app" >> app.log
+		done
+		echo "Finished benchmark"
+	) &
+	apppid=$!
 
 	# Migrate forth and back	
 	for (( n=0 ; n!=$iterations ; ++n )); do
 		# Allocate, write and free memory.
-		ssh centos7113 "~/bachelor-thesis/mem_balloon_bench/build/guest/mem_balloon_bench_guest --mode alloc --memory $((mem - 1)) --sleep 1" > /dev/null
-		sleep 5
+#		ssh centos7113 "~/bachelor-thesis/mem_balloon_bench/build/guest/mem_balloon_bench_guest --mode alloc --memory $((mem - 1)) --sleep 1" > /dev/null
+		sleep 30
 
 		# Migrate from a to b and save time
 		destination="$server_b"
 		time_measurement='true'
-		migrate_task=$(echo "$migrate_template" | sed s/\$time_measurement/$time_measurement/ | sed s/\$destination/$destination/)
+#		migrate_task=$(echo "$migrate_template" | sed s/\$time_measurement/$time_measurement/ | sed s/\$destination/$destination/)
+		migrate_task=$(echo "$migrate_template" | sed s/\$memory_ballooning/$memory_ballooning/ | sed s/\$time_measurement/$time_measurement/ | sed s/\$destination/$destination/)
 		mosquitto_sub -q 2 -h "$host" -t fast/migfra/"$server_a"/result -C 1 | gawk -v result_type="vm migrated" -v verbose=1 "$parse_result_gawk" || { echo "Failed migrating."; exit 1; } &
 		mosquitto_pub -q 2 -h "$host" -t fast/migfra/"$server_a"/task -m "$migrate_task"
 		wait $!
 
+		sleep 30
+
 		# Migrate back from b to a
 		destination="$server_a"
-		memory_ballooning='false'
-		time_measurement='false'
+#		memory_ballooning='false'
+#		time_measurement='false'
 		migrate_task=$(echo "$migrate_template" | sed s/\$memory_ballooning/$memory_ballooning/ | sed s/\$time_measurement/$time_measurement/ | sed s/\$destination/$destination/)
-		mosquitto_sub -q 2 -h "$host" -t fast/migfra/"$server_b"/result -C 1 | gawk -v result_type="vm migrated" "$parse_result_gawk" || { echo "Failed migrating."; exit 1; } &
+		mosquitto_sub -q 2 -h "$host" -t fast/migfra/"$server_b"/result -C 1 | gawk -v result_type="vm migrated" -v verbose=1 "$parse_result_gawk" || { echo "Failed migrating."; exit 1; } &
 		mosquitto_pub -q 2 -h "$host" -t fast/migfra/"$server_b"/task -m "$migrate_task"
 		wait $!
-	done | tee -a mem_bench_internal.log | gawk "$parse_iterations_output"
+	done | tee -a mem_bench_internal.log | gawk "$parse_iterations_output" | tee mem_bench_app.log
+
+	wait $appid
+
 	# stop
 	mosquitto_sub -q 2 -h "$host" -t fast/migfra/"$server_a"/result -C 1 | gawk -v result_type="vm stopped" "$parse_result_gawk" || { echo "Failed stopping vm."; exit 1; } &
 	mosquitto_pub -q 2 -h "$host" -t fast/migfra/"$server_a"/task -m "$stop_task"
